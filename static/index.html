@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Eye Opener</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a" aria-hidden="true"></div>
+    <div class="bg-orb orb-b" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <div class="brand-wrap">
+        <p class="eyebrow">Truth Analysis Workspace</p>
+        <h1>The Eye Opener</h1>
+      </div>
+      <p class="status-pill" aria-live="polite">System ready</p>
+    </header>
+
+    <main class="layout">
+      <section class="panel input-panel" aria-labelledby="claim-label">
+        <label id="claim-label" for="claim-input">Paste a claim to inspect</label>
+        <textarea
+          id="claim-input"
+          name="claim"
+          rows="5"
+          placeholder="Example: The Indian government launched NEP 2020"
+        ></textarea>
+        <div class="action-row">
+          <button type="button" disabled>Analyze (JS pending)</button>
+          <small>Interactive behavior will be added in the next step.</small>
+        </div>
+      </section>
+
+      <section class="panel stream-panel" aria-labelledby="stream-label">
+        <h2 id="stream-label">Pipeline Stream</h2>
+        <ol class="agent-timeline">
+          <li>preprocessor</li>
+          <li>surgeon</li>
+          <li>diver</li>
+          <li>skeptic</li>
+          <li>scorer</li>
+        </ol>
+        <div id="graph-container" style="width:100%;min-height:420px;"></div>
+        <p class="hint">Live event rendering will appear here once JS is connected.</p>
+      </section>
+
+      <section class="panel result-panel" aria-labelledby="result-label">
+        <h2 id="result-label">Result Snapshot</h2>
+        <div class="result-grid">
+          <article>
+            <h3>Retrieval Method</h3>
+            <p>Not evaluated</p>
+          </article>
+          <article>
+            <h3>Truth Score</h3>
+            <p>--</p>
+          </article>
+          <article>
+            <h3>Final Verdict</h3>
+            <p>Pending</p>
+          </article>
+        </div>
+      </section>
+    </main>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="/static/js/truth-graph.js"></script>
+    <script src="/static/js/main.js"></script>
+  </body>
+</html>

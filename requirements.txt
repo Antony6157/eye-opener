@@ -1,0 +1,13 @@
+flask
+flask-cors
+langchain
+langgraph
+langchain-openai
+langchain-groq
+chromadb
+langchain-community
+youtube-transcript-api
+beautifulsoup4
+ddgs
+requests
+python-dotenv
