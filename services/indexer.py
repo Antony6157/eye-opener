@@ -8,17 +8,151 @@ from typing import Iterable
 import chromadb
 import requests
 from bs4 import BeautifulSoup
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_ollama import OllamaEmbeddings
 
 import config
 
 
 SOURCES = [
-    {"name": "PIB", "url": "https://pib.gov.in/allRel.aspx", "selector": "div.content-area"},
-    {"name": "AltNews", "url": "https://www.altnews.in/", "selector": "article"},
-    {"name": "Factly", "url": "https://factly.in/category/fact-check/", "selector": "article"},
-    {"name": "BoomLive", "url": "https://www.boomlive.in/fact-check", "selector": "article"},
-    {"name": "VishvasNews", "url": "https://www.vishvasnews.com/", "selector": "article"},
+    # Fact-checking sites
+    {"name": "AltNews", "url": "https://www.altnews.in/", "selector": "article", "category": "fact_check"},
+    {"name": "Factly", "url": "https://factly.in/category/fact-check/", "selector": "article", "category": "fact_check"},
+    {
+        "name": "BoomLive",
+        "url": "https://www.boomlive.in/fact-check",
+        "selector": "a[href*='/fact-check/']",
+        "fallback_selector": None,
+        "category": "fact_check",
+    },
+    {
+        "name": "VishvasNews",
+        "url": "https://www.vishvasnews.com/",
+        "selector": "a[href*='vishvasnews.com']",
+        "fallback_selector": "h2 a",
+        "category": "fact_check",
+    },
+    # Independent journalism
+    {
+        "name": "ScrollIn",
+        "url": "https://scroll.in/latest",
+        "selector": "a[href*='/article/']",
+        "fallback_selector": None,
+        "category": "journalism",
+    },
+    {
+        "name": "TheWire",
+        "url": "https://thewire.in/politics",
+        "selector": "article.card-content",
+        "category": "journalism",
+        "skip": True,
+        "skip_reason": "heavily scripted, selector verification failed",
+    },
+    {
+        "name": "ThePrint",
+        "url": "https://theprint.in/politics/",
+        "selector": "h3.entry-title a",
+        "fallback_selector": "div.td_module_wrap",
+        "category": "journalism",
+    },
+    {
+        "name": "Newslaundry",
+        "url": "https://www.newslaundry.com/politics",
+        "selector": "article",
+        "category": "journalism",
+        "skip": True,
+        "skip_reason": "likely blocked or paywalled",
+    },
+    {
+        "name": "TheQuint",
+        "url": "https://www.thequint.com/news/politics",
+        "selector": "a[href*='/news/']",
+        "fallback_selector": None,
+        "category": "journalism",
+    },
+    # Government primary sources
+    {
+        "name": "PIB",
+        "url": "https://pib.gov.in/allRel.aspx",
+        "selector": "div.content-area",
+        "category": "government",
+        "skip": True,
+        "skip_reason": "403 Forbidden, needs authenticated session",
+    },
+    {"name": "MyGov", "url": "https://www.mygov.in/", "selector": "div.views-row", "category": "government"},
+    {
+        "name": "DataGovIn",
+        "url": "https://data.gov.in/",
+        "selector": "div.views-row",
+        "category": "government",
+        "skip": True,
+        "skip_reason": "no reliable selector found",
+    },
+    {
+        "name": "PRSIndia",
+        "url": "https://prsindia.org/bills",
+        "selector": "a[href*='bill']",
+        "fallback_selector": None,
+        "category": "parliament",
+        "skip": True,
+        "skip_reason": "404 on HTTP fetch, content requires JS rendering",
+    },
+    {
+        "name": "SansadIn",
+        "url": "https://sansad.in/ls/questions",
+        "selector": "div.question-content",
+        "category": "parliament",
+        "skip": True,
+        "skip_reason": "heavily scripted, no static content",
+    },
+    {
+        "name": "ECIGovIn",
+        "url": "https://www.eci.gov.in/",
+        "selector": "div.content-area",
+        "category": "government",
+        "skip": True,
+        "skip_reason": "no reliable selector found",
+    },
+    # Court documents
+    {
+        "name": "IndianKanoon",
+        "url": "https://indiankanoon.org/search/?formInput=constitution+india&pagenum=1",
+        "selector": "a[href*='/doc/']",
+        "fallback_selector": None,
+        "category": "legal",
+    },
+    {
+        "name": "SupremeCourt",
+        "url": "https://www.sci.gov.in/judgements",
+        "selector": "div.judgment-content",
+        "category": "legal",
+        "skip": True,
+        "skip_reason": "no reliable selector found",
+    },
+    # Economic and statistical
+    {
+        "name": "RBI",
+        "url": "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx",
+        "selector": "a[href*='PressRelease']",
+        "fallback_selector": "table",
+        "category": "economic",
+    },
+    {
+        "name": "MoSPI",
+        "url": "https://mospi.gov.in/web/mospi/home",
+        "selector": "main",
+        "fallback_selector": None,
+        "category": "economic",
+        "skip": True,
+        "skip_reason": "content requires JS rendering, static fetch returns empty",
+    },
+    {
+        "name": "NITIAayog",
+        "url": "https://www.niti.gov.in/",
+        "selector": "div.views-row",
+        "category": "economic",
+        "skip": True,
+        "skip_reason": "no reliable selector found",
+    },
 ]
 
 COLLECTION_NAME = "indian_political_facts"
@@ -46,9 +180,11 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
     return chunks
 
 
-def _extract_source_text(html: str, selector: str) -> str:
+def _extract_source_text(html: str, selector: str, fallback_selector: str | None = None) -> str:
     soup = BeautifulSoup(html, "html.parser")
     nodes = soup.select(selector)
+    if not nodes and fallback_selector:
+        nodes = soup.select(fallback_selector)
     if not nodes:
         return ""
     return "\n".join(node.get_text(" ", strip=True) for node in nodes)
@@ -72,9 +208,8 @@ def _build_ids(source_name: str, source_url: str, chunks: Iterable[str]) -> list
     return ids
 
 
-def _get_embedder() -> HuggingFaceEmbeddings:
-    # Local sentence-transformer embeddings (no Google embedding dependency).
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+def _get_embedder() -> OllamaEmbeddings:
+    return OllamaEmbeddings(model="nomic-embed-text", base_url=config.OLLAMA_BASE_URL)
 
 
 def _get_collection() -> chromadb.Collection:
@@ -91,13 +226,19 @@ def index_all_sources() -> None:
 
     for source in SOURCES:
         name = source["name"]
+
+        if source.get("skip"):
+            print(f"[SKIP] {name}: {source.get('skip_reason', 'source marked to skip')}")
+            continue
+
         url = source["url"]
         selector = source["selector"]
+        fallback_selector = source.get("fallback_selector")
 
         print(f"[INDEX] Fetching {name}: {url}")
         try:
             html = _fetch_source(url)
-            extracted = _extract_source_text(html, selector)
+            extracted = _extract_source_text(html, selector, fallback_selector)
             chunks = _chunk_text(extracted)
 
             if not chunks:
@@ -111,6 +252,7 @@ def index_all_sources() -> None:
                         "url": url,
                         "scraped_at": scraped_at,
                         "chunk_index": i,
+                        "category": source.get("category", "general"),
                     }
                     for i, _ in enumerate(chunks)
                 ]
@@ -129,6 +271,49 @@ def index_all_sources() -> None:
         time.sleep(2)
 
     print("Index build complete.")
+
+
+def verify_selectors_with_playwright(source_names: list[str] | None = None) -> None:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        print(f"[ERROR] Playwright is not available: {exc}")
+        print("Install with: pip install playwright && playwright install")
+        return
+
+    selected_sources = SOURCES
+    if source_names:
+        requested = {name.strip().lower() for name in source_names if name.strip()}
+        selected_sources = [src for src in SOURCES if src["name"].lower() in requested]
+
+    if not selected_sources:
+        print("[WARN] No matching sources to validate.")
+        return
+
+    print(f"[INFO] Validating {len(selected_sources)} source selectors with Playwright...")
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        for source in selected_sources:
+            name = source["name"]
+            url = source["url"]
+            selector = source["selector"]
+
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(1500)
+                count = page.locator(selector).count()
+
+                if count > 0:
+                    print(f"[OK] {name}: selector '{selector}' matched {count} elements")
+                else:
+                    print(f"[FAIL] {name}: selector '{selector}' matched 0 elements")
+            except Exception as exc:
+                print(f"[FAIL] {name}: selector '{selector}' check errored - {exc}")
+
+        browser.close()
 
 
 if __name__ == "__main__":

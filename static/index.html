@@ -4,7 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>The Eye Opener</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/static/css/style.css" />
+    <!-- Apply saved theme before paint to avoid flash -->
+    <script>document.documentElement.dataset.theme = localStorage.getItem('eo-theme') || 'light';</script>
   </head>
   <body>
     <div class="bg-orb orb-a" aria-hidden="true"></div>
@@ -15,8 +20,146 @@
         <p class="eyebrow">Truth Analysis Workspace</p>
         <h1>The Eye Opener</h1>
       </div>
-      <p class="status-pill" aria-live="polite">System ready</p>
+      <div class="header-actions">
+        <p class="status-pill" aria-live="polite">System ready</p>
+        <button id="settings-btn" class="settings-btn" aria-label="Open settings" title="Settings">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
     </header>
+
+    <!-- ── Settings Modal ───────────────────────────────────────── -->
+    <div id="settings-overlay" class="settings-overlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="settings-drawer">
+        <div class="settings-header">
+          <h2 id="settings-title">Settings</h2>
+          <button id="settings-close" class="settings-close" aria-label="Close settings">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <div class="settings-body">
+
+          <!-- ── Theme ──────────────────────────────── -->
+          <section class="settings-section">
+            <h3 class="settings-section-title">Appearance</h3>
+            <div class="setting-row">
+              <label for="theme-select">Theme</label>
+              <div class="theme-toggle" role="group" aria-label="Choose theme">
+                <button type="button" id="theme-light" class="theme-option" data-theme="light" aria-pressed="true">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                  Light
+                </button>
+                <button type="button" id="theme-dark" class="theme-option" data-theme="dark" aria-pressed="false">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                  Dark
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── LLM Provider ───────────────────────── -->
+          <section class="settings-section">
+            <h3 class="settings-section-title">LLM Provider</h3>
+
+            <div class="setting-row">
+              <label>Primary Provider</label>
+              <div class="provider-grid" role="radiogroup" aria-label="LLM provider">
+                <label class="provider-card" data-provider="ollama">
+                  <input type="radio" name="llm-provider" value="ollama" />
+                  <span class="provider-label">🖥️ Ollama<small>Local</small></span>
+                </label>
+                <label class="provider-card" data-provider="cerebras">
+                  <input type="radio" name="llm-provider" value="cerebras" />
+                  <span class="provider-label">⚡ Cerebras<small>Cloud</small></span>
+                </label>
+                <label class="provider-card" data-provider="groq">
+                  <input type="radio" name="llm-provider" value="groq" />
+                  <span class="provider-label">🚀 Groq<small>Cloud</small></span>
+                </label>
+                <label class="provider-card" data-provider="github">
+                  <input type="radio" name="llm-provider" value="github" />
+                  <span class="provider-label">🐙 GitHub AI<small>Cloud</small></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Ollama fields -->
+            <div class="provider-fields" data-for="ollama">
+              <div class="setting-row">
+                <label for="ollama-url">Ollama Base URL</label>
+                <input type="url" id="ollama-url" name="OLLAMA_BASE_URL" placeholder="http://localhost:11434" />
+              </div>
+              <div class="setting-row">
+                <label for="ollama-model">Model</label>
+                <div class="model-select-row">
+                  <select id="ollama-model" name="OLLAMA_MODEL">
+                    <option value="">— click refresh to load —</option>
+                  </select>
+                  <button type="button" id="ollama-refresh" class="btn-refresh" title="Refresh model list from Ollama">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cerebras fields -->
+            <div class="provider-fields" data-for="cerebras">
+              <div class="setting-row">
+                <label for="cerebras-key">API Key</label>
+                <input type="password" id="cerebras-key" name="CEREBRAS_API_KEY" placeholder="csk-…" autocomplete="off" />
+              </div>
+              <div class="setting-row">
+                <label for="cerebras-model">Model</label>
+                <input type="text" id="cerebras-model" name="CEREBRAS_MODEL" placeholder="llama3.3-70b" />
+              </div>
+            </div>
+
+            <!-- Groq fields -->
+            <div class="provider-fields" data-for="groq">
+              <div class="setting-row">
+                <label for="groq-key">API Key</label>
+                <input type="password" id="groq-key" name="GROQ_API_KEY" placeholder="gsk_…" autocomplete="off" />
+              </div>
+              <div class="setting-row">
+                <label for="groq-model">Model</label>
+                <input type="text" id="groq-model" name="GROQ_MODEL" placeholder="llama-3.3-70b-versatile" />
+              </div>
+            </div>
+
+            <!-- GitHub AI fields -->
+            <div class="provider-fields" data-for="github">
+              <div class="setting-row">
+                <label for="github-token">GitHub Token</label>
+                <input type="password" id="github-token" name="GITHUB_TOKEN" placeholder="ghp_…" autocomplete="off" />
+              </div>
+              <div class="setting-row">
+                <label for="github-model">Quality Model</label>
+                <input type="text" id="github-model" name="GITHUB_QUALITY_MODEL" placeholder="gpt-4.1-mini" />
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Server Info ────────────────────────── -->
+          <section class="settings-section">
+            <h3 class="settings-section-title">Server</h3>
+            <div class="setting-row">
+              <label>Flask Port</label>
+              <span class="setting-static" id="flask-port">5000</span>
+            </div>
+          </section>
+
+        </div><!-- /settings-body -->
+
+        <div class="settings-footer">
+          <p class="settings-hint" id="settings-hint"></p>
+          <button type="button" id="settings-save" class="btn-save">Save Settings</button>
+        </div>
+      </div>
+    </div>
 
     <main class="layout">
       <section class="panel input-panel" aria-labelledby="claim-label">
@@ -133,6 +276,14 @@
           </div>
         </div>
         <p class="hint status-hint">Waiting for input...</p>
+
+        <!-- D3 Truth Graph -->
+        <div id="graph-container" style="width:100%;min-height:420px;"></div>
+        <div class="graph-legend" aria-label="Graph legend">
+          <span><i class="dot dot-worker" aria-hidden="true"></i> Worker stage</span>
+          <span><i class="dot dot-orchestrator" aria-hidden="true"></i> Orchestrator</span>
+          <span><i class="dot dot-error" aria-hidden="true"></i> Error terminal</span>
+        </div>
       </section>
 
       <section class="panel result-panel" aria-labelledby="result-label">
@@ -165,6 +316,9 @@
         <div class="explanation-list" id="explanation-list"></div>
       </section>
     </main>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="/static/js/truth-graph.js"></script>
     <script src="/static/js/main.js"></script>
+    <script src="/static/js/settings.js"></script>
   </body>
 </html>

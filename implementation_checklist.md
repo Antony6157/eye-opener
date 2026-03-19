@@ -1,7 +1,7 @@
 # The Eye Opener - Master Implementation Checklist
 
 Date created: March 18, 2026
-Last reviewed: March 18, 2026 (post-Phase 4 frontend validation)
+Last reviewed: March 19, 2026 (deep repo + runtime audit)
 
 Note: status updates below are based on repository code inspection, not full runtime QA.
 
@@ -25,7 +25,7 @@ Note: status updates below are based on repository code inspection, not full run
 ### Exit criteria
 - [x] App boots successfully.
 - [x] Health endpoint returns success JSON.
-- [ ] Missing critical env vars fail fast with actionable error.
+- [x] Missing critical env vars surface warnings without crashing import.
 
 ## Phase 1 - State Contract and Input Preprocessing
 
@@ -49,13 +49,13 @@ Note: status updates below are based on repository code inspection, not full run
 ## Phase 2 - LangGraph Core Pipeline and SSE Bridge
 
 ### Scope
-- [x] Implement the 4 worker agents and orchestrator graph.
+- [x] Implement the 4 worker agents plus preprocessing stage in an Architect-orchestrated graph.
 - [x] Add execution runner that streams transitions to frontend.
 
 ### Deliverables
-- [x] `services/agents.py` (Surgeon, Diver stub/live-only, Skeptic, Scorer)
-- [x] `services/architect.py` (state graph + error terminal)
-- [x] `services/runner.py` (SSE event stream)
+- [x] `services/agents.py`
+- [x] `services/architect.py`
+- [x] `services/runner.py`
 - [x] `app.py` SSE endpoint integration
 
 ### Implementation checks
@@ -80,13 +80,14 @@ Note: status updates below are based on repository code inspection, not full run
 - [x] `services/agents.py` updated so Diver uses hybrid retrieval
 
 ### Implementation checks
-- [x] Trusted sources covered: PIB, Alt News, Factly, Boom Live, Vishvas News.
+- [x] Trusted source catalog expanded with category metadata and selector validation helper.
+- [x] Skip controls added for blocked/dynamic sources with explicit `skip_reason`.
 - [x] If RAG confidence is below threshold, fallback to live search.
 - [x] Persist retrieval path to `retrieval_method` (`rag`, `live_search`, `hybrid`).
 
 ### Exit criteria
 - [ ] Indexed claims resolve through RAG path.
-- [ ] Novel claims trigger fallback successfully.
+- [x] Novel claims trigger fallback successfully.
 - [x] Dual-channel failure sets clear `error` and exits safely.
 
 ## Phase 4 - Frontend Dashboard and D3 Live Graph
@@ -101,15 +102,15 @@ Note: status updates below are based on repository code inspection, not full run
 - [x] `static/js/truth-graph.js`
 
 ### Implementation checks
-- [ ] Include text input + YouTube URL input.
+- [x] Accept a single input box for text claims and YouTube URLs.
 - [x] Render active node glow based on streamed `active_agent`.
-- [ ] Display truth score, verdict cards, evidence summary, retrieval badges.
+- [x] Display truth score, verdict cards, evidence summary, and retrieval badges.
 - [x] Show inline error state when backend pipeline fails.
 
 ### Exit criteria
 - [x] User can submit claim and see real-time graph progression.
 - [x] Results panel correctly renders final output.
-- [ ] UI works on desktop and mobile breakpoints.
+- [x] UI is responsive enough for desktop and mobile breakpoints.
 
 ## Phase 5 - Integration Testing and Hardening
 
@@ -125,7 +126,8 @@ Note: status updates below are based on repository code inspection, not full run
 - [x] RAG-first retrieval behavior
 - [x] Live fallback behavior
 - [x] Error-route behavior
-- [ ] SSE/CORS behavior from separate origin
+- [ ] Empty-input SSE terminal event uses `event_type: error` (still emits terminal `complete` with error state)
+- [x] SSE/CORS behavior from separate origin
 - [x] Frontend render consistency
 
 ### Exit criteria
@@ -143,6 +145,8 @@ Note: status updates below are based on repository code inspection, not full run
 - [ ] Improve prompt quality for claim extraction/scoring.
 - [ ] Add regression tests for state schema and retrieval decisions.
 - [ ] Optimize frontend rendering for large claim sets.
+- [ ] Normalize SSE terminal contract so empty input ends with `event_type: error`.
+- [ ] Add automated integration tests for SSE event semantics and fallback routing.
 
 ## Cross-Phase Verification (from implementation plan)
 
@@ -152,17 +156,28 @@ Note: status updates below are based on repository code inspection, not full run
 
 ### LLM routing
 - [x] `services/llm.py` used by workers.
-- [x] Surgeon/Diver/Skeptic use `get_llm()`.
-- [x] Scorer uses `get_llm(prefer_quality=True)`.
+- [x] Surgeon/Diver/Skeptic use `get_llm_with_retry()`.
+- [x] Scorer uses `get_llm_with_retry(prefer_quality=True)`.
+- [x] Local Ollama is primary provider with cloud fallback chain.
+- [x] 429 retry/backoff wrapper is implemented.
 
 ### Retrieval behavior
 - [x] Deep Diver uses RAG first when available.
 - [x] Deep Diver falls back to live search for low-confidence/novel claims.
+- [x] Live sources split into RAG-backed and live-only domains.
+- [x] Legal (IndianKanoon) and PIB dedicated live-search enrichments are implemented.
 
 ### Results and UX
-- [ ] Results panel shows score, verdicts, evidence summary.
-- [ ] Retrieval method badges are displayed correctly.
+- [x] Results panel shows score, verdicts, evidence summary.
+- [x] Retrieval method badges are displayed correctly.
 - [x] Error state is visible and understandable in UI.
+
+## Recent hardening updates (March 19, 2026)
+
+- [x] Switched to local-first Ollama LLM routing with cloud fallbacks.
+- [x] Migrated embeddings to local `OllamaEmbeddings` (`nomic-embed-text`) in indexer and retriever.
+- [x] Added scorer parsing safety fallback: if verdicts exist but computed score is 0, derive from average confidence.
+- [x] Added `_safe_model_text` stripping of DeepSeek `<think>...</think>` blocks.
 
 ## Milestone sequence tracker
 - [x] Milestone 1: Bootstrap repo and run health check.

@@ -4,6 +4,7 @@ langchain
 langgraph
 langchain-openai
 langchain-groq
+langchain-ollama
 chromadb
 langchain-community
 youtube-transcript-api

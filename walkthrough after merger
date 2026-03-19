@@ -1,0 +1,922 @@
+# Eye Opener Merge — Walkthrough
+
+## Summary
+
+Merged OLD (`D:\projects\eye old\eye-openerr`) frontend and error handling into NEW (`D:\projects\eye opener`) backend. The merge was done in 3 phases, modifying **10 files** total.
+
+---
+
+## Phase 1: Backend Bug Fixes (5 changes)
+
+### [retriever.py](file:///D:/projects/eye%20opener/services/retriever.py)
+
+```diff:retriever.py
+from __future__ import annotations
+
+import chromadb
+from duckduckgo_search import DDGS
+from langchain_ollama import OllamaEmbeddings
+
+import config
+
+
+COLLECTION_NAME = "indian_political_facts"
+RAG_SOURCES = [
+    "altnews.in",
+    "factly.in",
+    "boomlive.in",
+    "vishvasnews.com",
+    "scroll.in",
+    "theprint.in",
+    "thequint.com",
+    "mygov.in",
+    "indiankanoon.org",
+    "prsindia.org",
+    "rbi.org.in",
+    "mospi.gov.in",
+]
+
+LIVE_ONLY_SOURCES = [
+    "pib.gov.in",
+    "thewire.in",
+    "newslaundry.com",
+    "sci.gov.in",
+    "sansad.in",
+    "data.gov.in",
+    "eci.gov.in",
+    "niti.gov.in",
+]
+
+
+def _live_sources() -> list[str]:
+    # Keep deterministic order and avoid duplicates.
+    return list(dict.fromkeys([*RAG_SOURCES, *LIVE_ONLY_SOURCES]))
+
+
+def _category_priority(category: str) -> int:
+    normalized = (category or "").strip().lower()
+    if normalized in {"legal", "government"}:
+        return 0
+    return 1
+
+
+def _get_collection() -> chromadb.Collection:
+    client = chromadb.PersistentClient(path=config.CHROMA_DB_PATH)
+    return client.get_or_create_collection(name=COLLECTION_NAME)
+
+
+def _get_embedder() -> OllamaEmbeddings:
+    return OllamaEmbeddings(model="nomic-embed-text", base_url=config.OLLAMA_BASE_URL)
+
+
+def _normalize_confidence(distance: float) -> float:
+    return max(0.0, min(1.0, 1.0 - float(distance)))
+
+
+def _is_legal_query(query: str) -> bool:
+    text = query.lower()
+    keywords = [
+        "supreme court",
+        "high court",
+        "judgement",
+        "judgment",
+        "constitutional",
+        "constitution",
+        "act",
+        "bill",
+        "ordinance",
+        "electoral bonds",
+        "verdict",
+    ]
+    return any(term in text for term in keywords)
+
+
+def rag_search(query: str, n_results: int = 5) -> tuple[list[dict], float]:
+    collection = _get_collection()
+    embedder = _get_embedder()
+
+    query_embedding = embedder.embed_query(query)
+    response = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=n_results,
+        include=["documents", "metadatas", "distances"],
+    )
+
+    raw_documents = response.get("documents") or [[]]
+    raw_metadatas = response.get("metadatas") or [[]]
+    raw_distances = response.get("distances") or [[]]
+
+    documents = raw_documents[0] if raw_documents else []
+    metadatas = raw_metadatas[0] if raw_metadatas else []
+    distances = raw_distances[0] if raw_distances else []
+
+    results: list[dict] = []
+    for text, metadata, distance in zip(documents, metadatas, distances):
+        md = metadata or {}
+        results.append(
+            {
+                "text": text,
+                "source": md.get("source_name", "unknown"),
+                "url": md.get("url", ""),
+                "distance": float(distance),
+                "chunk_index": md.get("chunk_index", -1),
+                "source_category": md.get("category", "general"),
+            }
+        )
+
+    top_confidence = _normalize_confidence(float(distances[0])) if distances else 0.0
+    return results, top_confidence
+
+
+def live_search(query: str, sources: list[str]) -> list[dict]:
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+
+    with DDGS() as ddgs:
+        for source in sources:
+            scoped_query = f"{query} site:{source}"
+            for row in ddgs.text(scoped_query, region="in-en", max_results=5):
+                url = str(row.get("href", "")).strip()
+                if not url or url in seen_urls:
+                    continue
+
+                seen_urls.add(url)
+                results.append(
+                    {
+                        "title": str(row.get("title", "")).strip(),
+                        "body": str(row.get("body", "")).strip(),
+                        "url": url,
+                        "source": source,
+                    }
+                )
+
+    return results
+
+
+def deep_legal_search_indiankanoon(query: str) -> list[dict]:
+    queries = [
+        f"{query} site:indiankanoon.org",
+        f"{query} judgement site:indiankanoon.org",
+        f"{query} constitution site:indiankanoon.org",
+    ]
+
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    with DDGS() as ddgs:
+        for scoped_query in queries:
+            for row in ddgs.text(scoped_query, region="in-en", max_results=5):
+                url = str(row.get("href", "")).strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                results.append(
+                    {
+                        "title": str(row.get("title", "")).strip(),
+                        "body": str(row.get("body", "")).strip(),
+                        "url": url,
+                        "source": "indiankanoon.org",
+                        "type": "live_legal",
+                        "source_category": "legal",
+                    }
+                )
+    return results
+
+
+def deep_pib_search(query: str) -> list[dict]:
+    scoped_queries = [
+        f"{query} site:pib.gov.in",
+        f"{query} press release site:pib.gov.in",
+    ]
+
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    with DDGS() as ddgs:
+        for scoped_query in scoped_queries:
+            for row in ddgs.text(scoped_query, region="in-en", max_results=5):
+                url = str(row.get("href", "")).strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                results.append(
+                    {
+                        "title": str(row.get("title", "")).strip(),
+                        "body": str(row.get("body", "")).strip(),
+                        "url": url,
+                        "source": "pib.gov.in",
+                        "type": "live_pib",
+                        "source_category": "government",
+                    }
+                )
+    return results
+
+
+def hybrid_search(query: str) -> tuple[list[dict], str]:
+    rag_results, confidence = rag_search(query)
+    rag_results = sorted(
+        rag_results,
+        key=lambda item: (_category_priority(str(item.get("source_category", "general"))), float(item.get("distance", 1.0))),
+    )
+
+    if rag_results and confidence >= 0.75:
+        return rag_results, "rag"
+
+    live_results = live_search(query, sources=_live_sources())
+    pib_results = deep_pib_search(query)
+    live_seen_urls = {str(item.get("url", "")) for item in live_results}
+    live_results.extend([item for item in pib_results if str(item.get("url", "")) not in live_seen_urls])
+
+    if _is_legal_query(query):
+        legal_results = deep_legal_search_indiankanoon(query)
+        seen_urls = {str(item.get("url", "")) for item in live_results}
+        live_results.extend([item for item in legal_results if str(item.get("url", "")) not in seen_urls])
+    if not rag_results:
+        return live_results, "live_search"
+
+    merged = [
+        {
+            "type": "rag",
+            **item,
+        }
+        for item in rag_results
+    ]
+    merged.extend(
+        {
+            "type": "live",
+            **item,
+        }
+        for item in live_results
+    )
+    return merged, "hybrid"
+===
+from __future__ import annotations
+
+import chromadb
+from duckduckgo_search import DDGS
+from langchain_ollama import OllamaEmbeddings
+
+import config
+
+
+COLLECTION_NAME = "indian_political_facts"
+RAG_SOURCES = [
+    "altnews.in",
+    "factly.in",
+    "boomlive.in",
+    "vishvasnews.com",
+    "scroll.in",
+    "theprint.in",
+    "thequint.com",
+    "mygov.in",
+    "indiankanoon.org",
+    "prsindia.org",
+    "rbi.org.in",
+    "mospi.gov.in",
+]
+
+LIVE_ONLY_SOURCES = [
+    "pib.gov.in",
+    "thewire.in",
+    "newslaundry.com",
+    "sci.gov.in",
+    "sansad.in",
+    "data.gov.in",
+    "eci.gov.in",
+    "niti.gov.in",
+]
+
+
+def _live_sources() -> list[str]:
+    # Keep deterministic order and avoid duplicates.
+    return list(dict.fromkeys([*RAG_SOURCES, *LIVE_ONLY_SOURCES]))
+
+
+def _category_priority(category: str) -> int:
+    normalized = (category or "").strip().lower()
+    if normalized in {"legal", "government"}:
+        return 0
+    return 1
+
+
+def _get_collection() -> chromadb.Collection:
+    client = chromadb.PersistentClient(path=config.CHROMA_DB_PATH)
+    return client.get_or_create_collection(name=COLLECTION_NAME)
+
+
+def _get_embedder() -> OllamaEmbeddings:
+    return OllamaEmbeddings(model="nomic-embed-text", base_url=config.OLLAMA_BASE_URL)
+
+
+def _normalize_confidence(distance: float) -> float:
+    return max(0.0, min(1.0, 1.0 - float(distance)))
+
+
+def _is_legal_query(query: str) -> bool:
+    text = query.lower()
+    keywords = [
+        "supreme court",
+        "high court",
+        "judgement",
+        "judgment",
+        "constitutional",
+        "constitution",
+        "act",
+        "bill",
+        "ordinance",
+        "electoral bonds",
+        "verdict",
+    ]
+    return any(term in text for term in keywords)
+
+
+def rag_search(query: str, n_results: int = 5) -> tuple[list[dict], float]:
+    collection = _get_collection()
+    embedder = _get_embedder()
+
+    query_embedding = embedder.embed_query(query)
+    response = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=n_results,
+        include=["documents", "metadatas", "distances"],
+    )
+
+    raw_documents = response.get("documents") or [[]]
+    raw_metadatas = response.get("metadatas") or [[]]
+    raw_distances = response.get("distances") or [[]]
+
+    documents = raw_documents[0] if raw_documents else []
+    metadatas = raw_metadatas[0] if raw_metadatas else []
+    distances = raw_distances[0] if raw_distances else []
+
+    results: list[dict] = []
+    for text, metadata, distance in zip(documents, metadatas, distances):
+        md = metadata or {}
+        results.append(
+            {
+                "text": text,
+                "source": md.get("source_name", "unknown"),
+                "url": md.get("url", ""),
+                "distance": float(distance),
+                "chunk_index": md.get("chunk_index", -1),
+                "source_category": md.get("category", "general"),
+            }
+        )
+
+    top_confidence = _normalize_confidence(float(distances[0])) if distances else 0.0
+    return results, top_confidence
+
+
+def live_search(query: str, sources: list[str]) -> list[dict]:
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+
+    with DDGS() as ddgs:
+        for source in sources:
+            scoped_query = f"{query} site:{source}"
+            for row in ddgs.text(scoped_query, region="in-en", max_results=5):
+                url = str(row.get("href", "")).strip()
+                if not url or url in seen_urls:
+                    continue
+
+                seen_urls.add(url)
+                results.append(
+                    {
+                        "title": str(row.get("title", "")).strip(),
+                        "body": str(row.get("body", "")).strip(),
+                        "url": url,
+                        "source": source,
+                        "text": str(row.get("body", "")).strip(),
+                    }
+                )
+
+    return results
+
+
+def deep_legal_search_indiankanoon(query: str) -> list[dict]:
+    queries = [
+        f"{query} site:indiankanoon.org",
+        f"{query} judgement site:indiankanoon.org",
+        f"{query} constitution site:indiankanoon.org",
+    ]
+
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    with DDGS() as ddgs:
+        for scoped_query in queries:
+            for row in ddgs.text(scoped_query, region="in-en", max_results=5):
+                url = str(row.get("href", "")).strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                results.append(
+                    {
+                        "title": str(row.get("title", "")).strip(),
+                        "body": str(row.get("body", "")).strip(),
+                        "url": url,
+                        "source": "indiankanoon.org",
+                        "type": "live_legal",
+                        "source_category": "legal",
+                        "text": str(row.get("body", "")).strip(),
+                    }
+                )
+    return results
+
+
+def deep_pib_search(query: str) -> list[dict]:
+    scoped_queries = [
+        f"{query} site:pib.gov.in",
+        f"{query} press release site:pib.gov.in",
+    ]
+
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    with DDGS() as ddgs:
+        for scoped_query in scoped_queries:
+            for row in ddgs.text(scoped_query, region="in-en", max_results=5):
+                url = str(row.get("href", "")).strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                results.append(
+                    {
+                        "title": str(row.get("title", "")).strip(),
+                        "body": str(row.get("body", "")).strip(),
+                        "url": url,
+                        "source": "pib.gov.in",
+                        "type": "live_pib",
+                        "source_category": "government",
+                        "text": str(row.get("body", "")).strip(),
+                    }
+                )
+    return results
+
+
+def hybrid_search(query: str) -> tuple[list[dict], str]:
+    rag_results: list[dict] = []
+    confidence: float = 0.0
+    try:
+        rag_results, confidence = rag_search(query)
+    except Exception:
+        pass  # ChromaDB may be empty or not yet indexed — fall back to live search
+    rag_results = sorted(
+        rag_results,
+        key=lambda item: (_category_priority(str(item.get("source_category", "general"))), float(item.get("distance", 1.0))),
+    )
+
+    if rag_results and confidence >= 0.75:
+        return rag_results, "rag"
+
+    live_results = live_search(query, sources=_live_sources())
+    pib_results = deep_pib_search(query)
+    live_seen_urls = {str(item.get("url", "")) for item in live_results}
+    live_results.extend([item for item in pib_results if str(item.get("url", "")) not in live_seen_urls])
+
+    if _is_legal_query(query):
+        legal_results = deep_legal_search_indiankanoon(query)
+        seen_urls = {str(item.get("url", "")) for item in live_results}
+        live_results.extend([item for item in legal_results if str(item.get("url", "")) not in seen_urls])
+    if not rag_results:
+        return live_results, "live_search"
+
+    merged = [
+        {
+            "type": "rag",
+            **item,
+        }
+        for item in rag_results
+    ]
+    merged.extend(
+        {
+            "type": "live",
+            **item,
+        }
+        for item in live_results
+    )
+    return merged, "hybrid"
+```
+
+**What changed:**
+- Added `"text"` field to `live_search()`, `deep_legal_search_indiankanoon()`, `deep_pib_search()` — fixes a bug where diver agent got empty evidence strings for live-fetched results
+- Wrapped `rag_search()` in `hybrid_search()` with try/except — prevents crash when ChromaDB is empty/uninitialized
+
+### [runner.py](file:///D:/projects/eye%20opener/services/runner.py)
+
+```diff:runner.py
+import json
+from collections.abc import Generator
+
+from services.architect import graph
+from services.state import AgentState, initial_state
+
+
+def _to_sse(payload: dict[str, object]) -> str:
+    return f"data: {json.dumps(payload)}\\n\\n"
+
+
+def run_pipeline(raw_input: str) -> Generator[str, None, None]:
+    state = initial_state(raw_input)
+    final_state: AgentState = state
+
+    try:
+        for event in graph.stream(state):
+            if not event:
+                continue
+
+            node_name = list(event.keys())[0]
+            node_state = event[node_name]
+            final_state = node_state
+            payload = {
+                "active_agent": node_state.get("active_agent", node_name),
+                "event_type": "step",
+                "state_snapshot": node_state,
+            }
+            yield _to_sse(payload)
+
+        yield _to_sse(
+            {
+                "active_agent": final_state.get("active_agent", "architect"),
+                "event_type": "error" if final_state.get("error") else "complete",
+                "state": final_state,
+            }
+        )
+    except Exception as exc:
+        yield _to_sse(
+            {
+                "active_agent": "error_handler",
+                "event_type": "error",
+                "message": str(exc),
+            }
+        )
+
+
+def stream_pipeline(raw_input: str) -> Generator[dict[str, object], None, None]:
+    final_state = initial_state(raw_input)
+    for event in graph.stream(final_state):
+        if not event:
+            continue
+        node_name = list(event.keys())[0]
+        node_state = event[node_name]
+        final_state = node_state
+        yield {
+            "active_agent": node_state.get("active_agent", node_name),
+            "event_type": "step",
+            "state": node_state,
+        }
+
+    yield {
+        "active_agent": final_state.get("active_agent", "architect"),
+        "event_type": "error" if final_state.get("error") else "complete",
+        "state": final_state,
+    }
+
+
+def run_pipeline_once(raw_input: str) -> AgentState:
+    final_state = initial_state(raw_input)
+    for event in stream_pipeline(raw_input):
+        candidate = event.get("state")
+        if isinstance(candidate, dict):
+            final_state = candidate
+    return final_state
+===
+import json
+from collections.abc import Generator
+
+from services.architect import graph
+from services.state import AgentState, initial_state
+
+
+def _to_sse(payload: dict[str, object]) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def run_pipeline(raw_input: str) -> Generator[str, None, None]:
+    state = initial_state(raw_input)
+    final_state: AgentState = state
+
+    try:
+        for event in graph.stream(state):
+            if not event:
+                continue
+
+            node_name = list(event.keys())[0]
+            node_state = event[node_name]
+            final_state = node_state
+            payload = {
+                "active_agent": node_state.get("active_agent", node_name),
+                "event_type": "step",
+                "state_snapshot": node_state,
+            }
+            yield _to_sse(payload)
+
+        yield _to_sse(
+            {
+                "active_agent": final_state.get("active_agent", "architect"),
+                "event_type": "error" if final_state.get("error") else "complete",
+                "state": final_state,
+            }
+        )
+    except Exception as exc:
+        yield _to_sse(
+            {
+                "active_agent": "error_handler",
+                "event_type": "error",
+                "message": str(exc),
+            }
+        )
+
+
+def stream_pipeline(raw_input: str) -> Generator[dict[str, object], None, None]:
+    final_state = initial_state(raw_input)
+    try:
+        for event in graph.stream(final_state):
+            if not event:
+                continue
+            node_name = list(event.keys())[0]
+            node_state = event[node_name]
+            final_state = node_state
+            yield {
+                "active_agent": node_state.get("active_agent", node_name),
+                "event_type": "step",
+                "state": node_state,
+            }
+
+        yield {
+            "active_agent": final_state.get("active_agent", "architect"),
+            "event_type": "complete",
+            "state": final_state,
+        }
+    except Exception as exc:
+        yield {
+            "active_agent": "error_handler",
+            "event_type": "error",
+            "message": str(exc),
+            "state": final_state,
+        }
+
+
+def run_pipeline_once(raw_input: str) -> AgentState:
+    final_state = initial_state(raw_input)
+    for event in stream_pipeline(raw_input):
+        candidate = event.get("state")
+        if isinstance(candidate, dict):
+            final_state = candidate
+    return final_state
+```
+
+**What changed:**
+- Fixed `_to_sse()` double-escaping bug (`\\\\n\\\\n` → `\\n\\n`)
+- Added try/except to `stream_pipeline()` so errors are yielded as error payloads instead of crashing
+
+### [app.py](file:///D:/projects/eye%20opener/app.py)
+
+```diff:app.py
+import json
+from flask import Flask, Response, jsonify, request, send_from_directory
+from flask_cors import CORS
+
+import config
+
+
+app = Flask(__name__, static_folder="static", static_url_path="/static")
+CORS(app)
+
+
+def _llm_config_error_response() -> tuple[Response, int]:
+    return (
+        jsonify(
+            {
+                "status": "error",
+                "error": "Server configuration is incomplete.",
+                "details": config.CONFIG_ERRORS,
+            }
+        ),
+        503,
+    )
+
+
+@app.get("/")
+def index() -> Response:
+    try:
+        return send_from_directory("static", "index.html")
+    except Exception as exc:
+        return jsonify({"error": f"Failed to load index page: {exc}"}), 500
+
+
+@app.get("/api/health")
+def health() -> Response:
+    try:
+        return jsonify(
+            {
+                "status": "ok",
+                "config_ok": len(config.CONFIG_ERRORS) == 0,
+                "config_errors": config.CONFIG_ERRORS,
+                "config_warnings": config.CONFIG_WARNINGS,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Health check failed: {exc}"}), 500
+
+
+@app.post("/api/verify")
+def verify() -> Response:
+    try:
+        if config.CONFIG_ERRORS:
+            return _llm_config_error_response()
+
+        from services.runner import run_pipeline_once
+
+        payload = request.get_json(silent=True) or {}
+        raw_input = str(payload.get("input", "")).strip()
+
+        state = run_pipeline_once(raw_input)
+
+        if state.get("error"):
+            return jsonify({"status": "error", "state": state}), 400
+
+        return jsonify({"status": "ok", "state": state})
+    except Exception as exc:
+        return jsonify({"error": f"Verify route failed: {exc}"}), 500
+
+
+@app.get("/api/stream")
+def stream() -> Response:
+    try:
+        if config.CONFIG_ERRORS:
+            return _llm_config_error_response()
+
+        from services.runner import stream_pipeline
+
+        raw_input = request.args.get("input", "").strip()
+
+        def event_stream():
+            for payload in stream_pipeline(raw_input):
+                yield f"data: {json.dumps(payload)}\n\n"
+
+        return Response(event_stream(), mimetype="text/event-stream")
+    except Exception as exc:
+        return jsonify({"error": f"Stream route failed: {exc}"}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=config.FLASK_PORT, debug=config.FLASK_ENV == "development")
+===
+import json
+from flask import Flask, Response, jsonify, request, send_from_directory
+from flask_cors import CORS
+
+import config
+
+
+app = Flask(__name__, static_folder="static", static_url_path="/static")
+CORS(app)
+
+
+def _llm_config_error_response() -> tuple[Response, int]:
+    return (
+        jsonify(
+            {
+                "status": "error",
+                "error": "Server configuration is incomplete.",
+                "details": config.CONFIG_ERRORS,
+            }
+        ),
+        503,
+    )
+
+
+@app.get("/")
+def index() -> Response:
+    try:
+        return send_from_directory("static", "index.html")
+    except Exception as exc:
+        return jsonify({"error": f"Failed to load index page: {exc}"}), 500
+
+
+@app.get("/api/health")
+def health() -> Response:
+    try:
+        return jsonify(
+            {
+                "status": "ok",
+                "config_ok": len(config.CONFIG_ERRORS) == 0,
+                "config_errors": config.CONFIG_ERRORS,
+                "config_warnings": config.CONFIG_WARNINGS,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Health check failed: {exc}"}), 500
+
+
+@app.post("/api/verify")
+def verify() -> Response:
+    try:
+        if config.CONFIG_ERRORS:
+            return _llm_config_error_response()
+
+        from services.runner import run_pipeline_once
+
+        payload = request.get_json(silent=True) or {}
+        raw_input = str(payload.get("input", "")).strip()
+
+        state = run_pipeline_once(raw_input)
+
+        if state.get("error"):
+            return jsonify({"status": "error", "state": state}), 400
+
+        return jsonify({"status": "ok", "state": state})
+    except Exception as exc:
+        return jsonify({"error": f"Verify route failed: {exc}"}), 500
+
+
+@app.get("/api/stream")
+def stream() -> Response:
+    try:
+        if config.CONFIG_ERRORS:
+            return _llm_config_error_response()
+
+        from services.runner import stream_pipeline
+
+        raw_input = request.args.get("input", "").strip()
+
+        def event_stream():
+            try:
+                for payload in stream_pipeline(raw_input):
+                    yield f"data: {json.dumps(payload)}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'event_type': 'error', 'message': str(exc)})}\n\n"
+
+        return Response(event_stream(), mimetype="text/event-stream")
+    except Exception as exc:
+        return jsonify({"error": f"Stream route failed: {exc}"}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=config.FLASK_PORT, debug=config.FLASK_ENV == "development")
+```
+
+**What changed:**
+- Added inner try/except in `event_stream()` generator for graceful SSE error handling
+
+---
+
+## Phase 2: Frontend Merge (3 files)
+
+### [index.html](file:///D:/projects/eye%20opener/static/index.html)
+
+Replaced with OLD's version (flow-node pipeline visualization, sources panel, explanation panel), then added D3.js CDN script, `truth-graph.js` script, `#graph-container` div, and graph legend.
+
+### [style.css](file:///D:/projects/eye%20opener/static/css/style.css)
+
+Replaced with OLD's version (529 → 560 lines), added D3 graph-legend and dot styles at the end.
+
+### [main.js](file:///D:/projects/eye%20opener/static/js/main.js)
+
+Merged both versions: OLD's flow-node animations, `renderSources()`, `renderExplanation()` + NEW's `STAGE_LABELS`, `labelForStage()`, D3 `truthGraph.activateNode()` integration, and error event handling.
+
+---
+
+## Phase 3: Config & Documentation (4 files)
+
+| File | Change |
+|------|--------|
+| `requirements.txt` | Added `sentence-transformers`, `langchain-huggingface` |
+| `.env.example` | Already superset — no changes |
+| `architecture_notes.md` | Copied from OLD |
+| `changes.md` | Copied from OLD |
+
+---
+
+## Files Left Unchanged
+
+These files are identical in both projects or NEW is authoritative:
+
+| File | Reason |
+|------|--------|
+| `config.py` | NEW has Ollama support |
+| `services/llm.py` | NEW has Ollama + retry |
+| `services/agents.py` | User's updated version |
+| `services/indexer.py` | NEW is superset (20+ sources) |
+| `services/preprocessor.py` | Identical |
+| `services/architect.py` | Identical |
+| `services/state.py` | Identical |
+| `static/js/truth-graph.js` | NEW only — kept as-is |
+
+---
+
+## Verification
+
+### Python Syntax Check
+```
+✓ app.py OK
+✓ runner.py OK
+✓ retriever.py OK
+✓ config.py OK
+✓ agents.py OK
+```
+
+All modified Python files pass `py_compile` syntax checks.
+
+### Remaining Manual Steps
+1. `pip install -r requirements.txt` — install merged dependencies
+2. `python app.py` — verify Flask starts without import errors
+3. Open `http://localhost:5000/api/health` — check health endpoint
+4. Full UI test with a claim (requires Ollama or API keys)

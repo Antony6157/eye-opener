@@ -1,4 +1,20 @@
 (() => {
+  const STAGE_LABELS = {
+    preprocessor: "Preprocessor",
+    surgeon: "Surgeon",
+    diver: "Diver",
+    skeptic: "Skeptic",
+    scorer: "Scorer",
+    architect: "Architect (Orchestrator)",
+    error_handler: "Error Handler",
+    error: "Error",
+    claim: "Claim",
+  };
+
+  function labelForStage(stageId) {
+    return STAGE_LABELS[stageId] || stageId;
+  }
+
   const inputEl = document.querySelector("#claim-input");
   const analyzeBtn = document.querySelector(".action-row button");
   const inputPanel = document.querySelector(".input-panel");
@@ -23,7 +39,7 @@
   const activeAgentEl = document.createElement("p");
   activeAgentEl.className = "hint";
   activeAgentEl.id = "active-agent-display";
-  activeAgentEl.textContent = "Active agent: idle";
+  activeAgentEl.textContent = "Active stage: idle";
   streamPanel.appendChild(activeAgentEl);
 
   const errorEl = document.createElement("p");
@@ -73,9 +89,14 @@
       return;
     }
 
-    activeAgentEl.textContent = `Active agent: ${activeAgent}`;
-    setStatus(`Running: ${activeAgent}`);
-    // Remove active class from all nodes and paths
+    const stageLabel = labelForStage(activeAgent);
+    activeAgentEl.textContent = `Active stage: ${stageLabel}`;
+    setStatus(`Running: ${stageLabel}`);
+
+    // Activate D3 truth graph node (if loaded)
+    window.truthGraph?.activateNode(activeAgent);
+
+    // Activate flow-node UI
     document.querySelectorAll(".flow-node, .flow-path").forEach((el) => {
       el.classList.remove("active");
     });
@@ -85,7 +106,7 @@
       if (activeAgent === "error") {
         activeEl.hidden = false;
       }
-      
+
       activeEl.classList.add("active");
 
       // Activate the path immediately preceding this node
@@ -225,6 +246,14 @@
 
     if (state?.error) {
       showInlineError(`Pipeline error: ${state.error}`);
+      setStatus("Error");
+      setLoadingState(false);
+      closeStream();
+      return;
+    }
+
+    if (eventType === "error" && payload?.message) {
+      showInlineError(`Pipeline error: ${payload.message}`);
       setStatus("Error");
       setLoadingState(false);
       closeStream();

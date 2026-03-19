@@ -3,7 +3,7 @@
 Date: March 18, 2026
 
 ## Objective
-Build The Eye Opener as an AI-powered fact-checking platform for Indian political discourse using Flask, LangGraph, hybrid retrieval (ChromaDB + DuckDuckGo fallback), and a live D3.js visualization frontend.
+Build The Eye Opener as an AI-powered fact-checking platform for Indian political discourse using Flask, LangGraph, hybrid retrieval, and a live D3.js visualization frontend.
 
 ## Phase 0 - Project Bootstrap and Guardrails
 
@@ -23,7 +23,7 @@ Build The Eye Opener as an AI-powered fact-checking platform for Indian politica
 ### Exit Criteria
 - App boots successfully.
 - Health endpoint returns success JSON.
-- Missing critical env vars fail fast with actionable error.
+- Missing critical env vars surface warnings without crashing import.
 
 ## Phase 1 - State Contract and Input Preprocessing
 
@@ -47,13 +47,13 @@ Build The Eye Opener as an AI-powered fact-checking platform for Indian politica
 ## Phase 2 - LangGraph Core Pipeline and SSE Bridge
 
 ### Scope
-- Implement the 4 worker agents and orchestrator graph.
+- Implement the 4 worker agents plus preprocessing stage in an Architect-orchestrated graph.
 - Add execution runner that streams transitions to frontend.
 
 ### Deliverables
-- `services/agents.py` (Surgeon, Diver stub/live-only, Skeptic, Scorer)
-- `services/architect.py` (state graph + error terminal)
-- `services/runner.py` (SSE event stream)
+- `services/agents.py`
+- `services/architect.py`
+- `services/runner.py`
 - `app.py` SSE endpoint integration
 
 ### Implementation Notes
@@ -78,8 +78,8 @@ Build The Eye Opener as an AI-powered fact-checking platform for Indian politica
 - `services/agents.py` update: Diver uses hybrid retrieval
 
 ### Implementation Notes
-- Trusted sources: PIB, Alt News, Factly, Boom Live, Vishvas News.
-- If RAG confidence below threshold, fallback to live search.
+- Trusted sources include fact-checking, journalism, legal, economic, and government domains.
+- If RAG confidence is below threshold, fallback to live search.
 - Persist retrieval path to `retrieval_method` (`rag`, `live_search`, `hybrid`).
 
 ### Exit Criteria
@@ -99,9 +99,9 @@ Build The Eye Opener as an AI-powered fact-checking platform for Indian politica
 - `static/js/truth-graph.js`
 
 ### Implementation Notes
-- Include text input + YouTube URL input.
+- Include a single input area that accepts text claims or YouTube URLs.
 - Render active node glow based on streamed `active_agent`.
-- Display truth score, verdict cards, evidence summary, retrieval badges.
+- Display truth score, verdict cards, evidence summary, retrieval badges, and source references.
 - Show inline error state when backend pipeline fails.
 
 ### Exit Criteria
@@ -146,7 +146,7 @@ Build The Eye Opener as an AI-powered fact-checking platform for Indian politica
 
 1. Phase 1 depends on Phase 0.
 2. Phase 2 depends on Phase 1.
-3. Phase 3 depends on Phase 2 (Diver upgrade in-place).
+3. Phase 3 depends on Phase 2.
 4. Phase 4 can begin after Phase 2 contracts are stable; full verification needs Phase 3.
 5. Phase 5 depends on Phases 2, 3, and 4.
 6. Phase 6 starts after Phase 5 baseline sign-off.

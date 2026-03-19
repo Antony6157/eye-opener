@@ -5,109 +5,79 @@
 ### Fully working
 - Backend app boots and `/api/health` returns OK.
 - SSE pipeline runs end-to-end for non-empty claims through: `preprocessor -> surgeon -> diver -> skeptic -> scorer`.
-- `retrieval_method` is being populated in final output (`hybrid` observed in multiple runs).
-- Frontend wiring is now in place:
-  - `static/index.html` includes D3 CDN + `truth-graph.js` + `main.js` in correct order.
-  - Claim submit triggers SSE stream and updates active agent text/status.
+- `retrieval_method` is populated in final output.
+- Frontend wiring is in place:
+  - `static/index.html` loads the graph script and main UI script in the correct order.
+  - Claim submit triggers SSE stream and updates active stage text and status.
   - Results panel populates on completion.
-- D3 graph now renders in `#graph-container` with all 8 nodes visible at load.
-- Graph node highlighting works visually during SSE (confirmed for surgeon/diver/skeptic/scorer in live runs).
+- The workflow graph renders in `#graph-container` with the current node set visible at load.
+- Graph node highlighting works visually during SSE.
 
 ### Partially working
-- Full visual sequence from graph node classes is mostly confirmed, but `preprocessor` highlight is hard to reliably capture in automated sampling because the transition is very fast.
-- Verdict quality is inconsistent across runs for complex factual claims; same pipeline may return strong verdicts in one run and weak/Unverifiable outputs in another.
-- Source retrieval works, but evidence relevance/quality is inconsistent, especially on claims requiring authoritative government stats.
+- Full visual sequence from graph node classes is mostly confirmed, but `preprocessor` highlight is fast and not always captured in screenshots.
+- Verdict quality is still inconsistent across runs for complex factual claims.
+- Source retrieval works, but evidence relevance and coverage are still uneven on claims requiring authoritative government context.
 
-### Broken
-- Some runs collapse to low-quality final scoring (`Unverifiable (0%)` across split claims) even when claim is likely verifiable.
-- Rate-limit behavior is not hardened: 429 paths degrade output quality and can route to error handling instead of robust retry/fallback.
-- Some source adapters/selectors are stale or blocked (PIB/BoomLive/VishvasNews issues below).
-- Empty-input validation at runner level is still not fully verified for correct SSE error event semantics.
+### Broken or incomplete
+- Some runs collapse to low-quality final scoring even when the claim is likely verifiable.
+- Rate-limit behavior is not fully hardened.
+- Some source adapters/selectors are intentionally skipped because they are blocked or JS-heavy.
+- Empty-input validation at runner level still emits a terminal `complete` event with `state.error` rather than a dedicated terminal `error` event.
 
 ## Section 2 — Known bugs to fix
 
-### Bug 1: `truth_score` becomes 0 when Groq hits 429 during skeptic/scorer
+### Bug 1: LLM rate limits still degrade output quality
 - Symptom:
-  - Final score drops to `0` or run degrades after upstream 429s.
+  - Final score drops or runs degrade after upstream 429s.
   - Pipeline can route to `error_handler` instead of recovering.
 - Root cause (known/likely):
-  - No resilient retry/backoff path around LLM calls in late pipeline stages.
-  - Error bubbling marks state as fatal too early.
-- File to fix:
+  - Retry/backoff is present, but the broader pipeline still needs more resilient handling around late-stage failures.
+- Files to inspect:
   - `services/llm.py`
-  - `services/agents.py` (error propagation handling in skeptic/scorer)
-  - `services/architect.py` (only if graph routing logic needs non-fatal retry path)
-- Exact fix to apply:
-  1. Add retry wrapper in `services/llm.py` for 429 with exponential backoff.
-  2. Try Cerebras first where configured; on retryable failure, fall back to Groq.
-  3. Between retries, sleep 5s (then 10s, then 20s).
-  4. Return structured retryable error metadata; in skeptic/scorer treat retryable failures as recoverable before setting terminal `error`.
-  5. Only route to `error_handler` after max retries exhausted.
+  - `services/agents.py`
+  - `services/architect.py`
+- Current direction:
+  1. Preserve retry behavior for 429-like errors.
+  2. Keep Cerebras before Groq as the cloud fallback order.
+  3. Only route to `error_handler` after retry exhaustion.
 
-### Bug 2: Scorer returns `Unverifiable (0%)` for all claims in some runs
+### Bug 2: Scorer quality still varies across runs
 - Symptom:
-  - Final verdict list contains mostly/only `Unverifiable (0%)`, including claims that should be checkable.
+  - Final verdict list can still contain weak or ambiguous outputs for hard claims.
 - Root cause (known/likely):
-  - Upstream rate limiting causing low-context/empty context for scoring.
-  - Evidence quality threshold too strict/poor retrieval match for certain claims.
-  - Scoring prompt not robustly handling sparse but non-empty evidence.
-- File to fix:
-  - `services/agents.py` (scorer prompt/template and evidence packaging)
-  - `services/retriever.py` (confidence threshold and evidence selection)
-- Exact fix to apply:
-  1. Update scorer prompt: default to `Unverifiable` only when evidence is truly insufficient, not as a blanket fallback.
-  2. Ensure scorer receives top evidence snippets + source metadata consistently.
-  3. Lower RAG threshold (see Section 3) to improve evidence intake.
-  4. Add guardrail: if evidence count is zero due to retriever/LLM failure, surface explicit retrieval-quality warning in state.
+  - Evidence quality threshold and prompt robustness still need tuning for sparse evidence cases.
+- Files to inspect:
+  - `services/agents.py`
+  - `services/retriever.py`
+- Current direction:
+  1. Keep the JSON-based scorer output.
+  2. Ensure evidence packaging includes the strongest available snippets and source metadata.
+  3. Surface retrieval-quality issues explicitly instead of silently collapsing to poor verdicts.
 
-### Bug 3: PIB source returns HTTP 403 in indexer
+### Bug 3: PIB source remains skip-only in indexing
 - Symptom:
-  - Indexing or fetching PIB pages fails with 403.
-- Root cause (known):
-  - Requests do not look like a browser; missing realistic headers.
-- File to fix:
+  - PIB pages are not part of static indexing.
+- Root cause:
+  - The source is intentionally skipped because the static fetch path is unreliable for that site.
+- File to inspect:
   - `services/indexer.py`
-- Exact fix to apply:
-  1. Add browser-like headers: `User-Agent`, `Accept`, `Accept-Language`, `Referer`, and reasonable `Connection` settings.
-  2. Reuse a `requests.Session()` with those headers.
-  3. Add polite delay between requests and retry on transient failures.
-  4. Log blocked URLs separately for re-run.
 
-### Bug 4: BoomLive and VishvasNews selectors no longer match
+### Bug 4: Empty input still uses a terminal `complete` event
 - Symptom:
-  - Extracted content is empty/partial or parser misses article body.
-- Root cause (known):
-  - Site DOM changed; static selectors are stale.
-- File to fix:
-  - `services/indexer.py`
-- Exact fix to apply:
-  1. Use Playwright to inspect current DOM for each site.
-  2. Update selector map with primary + fallback selectors.
-  3. Add selector health check: if extraction length below threshold, try fallback selector set.
-  4. Add per-site extraction tests with stored sample URLs.
-
-### Bug 5: Empty input emits `event_type: complete` instead of `event_type: error`
-- Symptom:
-  - Empty claim can terminate as `complete` rather than explicit validation error.
-- Root cause (known/likely):
-  - Runner/validation path marks run as done without standardized error event.
-- File to fix:
+  - Empty claim can terminate as `complete` rather than an explicit validation error.
+- File to inspect:
   - `services/runner.py`
-  - possibly `services/preprocessor.py` (if validation is there)
-- Exact fix to apply:
-  1. Add explicit early validation in runner entrypoint.
-  2. For empty/whitespace input, emit SSE payload with `event_type: error`, set `state.error`, and stop stream.
-  3. Keep this path distinct from normal `complete` finalization.
-  4. Add a direct endpoint test to verify this behavior (not yet verified currently).
+  - `services/preprocessor.py`
+- Current direction:
+  1. Keep `state.error` as the current signal.
+  2. If contract normalization is desired, add a dedicated terminal error event later.
 
 ## Section 3 — Quality improvements to implement
 
-1. Lower RAG confidence threshold from `0.75` to `0.60` in `services/retriever.py`.
-2. Scorer prompt update in `services/agents.py`: default to `Unverifiable` when evidence is insufficient, not `False`.
-3. Add exponential-backoff retry in `services/llm.py` for 429 errors:
-   - Provider order: Cerebras first, then Groq fallback.
-   - Wait 5s between retries (then scale up exponentially).
-4. Add `time.sleep(...)` between DuckDuckGo site-restricted queries in live search to reduce rate limiting.
+1. Tighten SSE terminal semantics for empty input.
+2. Improve scorer prompt stability for sparse evidence.
+3. Add more integration coverage for verify/stream and settings flows.
+4. Continue to validate source selector coverage for high-value domains.
 
 ## Section 4 — Git tasks remaining
 
@@ -131,10 +101,10 @@ Read and follow project context from these files first:
 
 Then continue from Phase 5 hardening and bug-fix work only.
 Priority order:
-- Fix 429 retry/fallback behavior in services/llm.py and prevent premature error_handler routing.
-- Fix scorer quality degradation (Unverifiable 0% overuse) by improving scorer prompt and evidence packaging.
-- Fix indexer source reliability: PIB 403 headers, BoomLive/VishvasNews selector refresh via Playwright.
-- Verify and fix empty-input SSE contract in services/runner.py so empty input emits event_type:error, not complete.
+- Tighten SSE terminal semantics for empty input.
+- Improve scorer robustness for sparse evidence.
+- Expand integration coverage for verify, stream, and settings.
+- Continue to validate source selector coverage for high-value domains.
 
 Constraints:
 - Make minimal, targeted edits.

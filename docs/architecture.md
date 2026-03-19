@@ -1,78 +1,150 @@
 # Architecture
 
-## Pipeline Overview
+## System overview
 
-The backend is a LangGraph state machine executed per request.
+The Eye Opener is a Flask application that executes a LangGraph claim-verification pipeline and streams state updates to the frontend through Server-Sent Events.
 
-Node order:
-1. `preprocessor`
-2. `surgeon`
-3. `diver`
-4. `skeptic`
-5. `scorer`
-6. `error_handler` (terminal on failure)
+Primary flow:
+- input ingestion
+- staged verification
+- retrieval and critique
+- scoring and summary
+- live UI updates during execution
 
-The state contract is defined in `services/state.py` as `AgentState`.
+## Graph topology
 
-## State Model
+Runtime graph nodes:
+- preprocessor
+- surgeon
+- diver
+- skeptic
+- scorer
+- error_handler
+
+Node routing:
+- entry: preprocessor
+- success path: preprocessor -> surgeon -> diver -> skeptic -> scorer -> end
+- failure path: any stage with error -> error_handler -> end
+
+Terminology:
+- worker agents: surgeon, diver, skeptic, scorer
+- execution stages: preprocessor plus 4 workers
+- architect: orchestration code that compiles and routes the graph
+
+## State contract
+
+State model is defined in [services/state.py](../services/state.py).
 
 Key fields:
-- `raw_input`: Original user input.
-- `cleaned_text`: Normalized text or transcript.
-- `claims`: Verifiable claims extracted from text.
-- `research_logs`: Evidence grouped by claim.
-- `critiques`: Skeptic outputs.
-- `verdicts`: Structured scoring outputs by claim.
-- `truth_score`: Integer aggregate score.
-- `active_agent`: Current node for stream consumers.
-- `retrieval_method`: `rag`, `live_search`, or `hybrid`.
-- `error`: Error message or `None`.
+- raw_input
+- cleaned_text
+- claims
+- research_logs
+- critiques
+- verdicts
+- truth_score
+- active_agent
+- retrieval_method
+- error
 
-## LLM Routing
+The retrieval_method field is one of:
+- rag
+- live_search
+- hybrid
 
-LLM clients are centralized in `services/llm.py` via `get_llm(prefer_quality=False)`.
+## LLM architecture
 
-Routing policy:
-- If `prefer_quality=True` and `GITHUB_TOKEN` exists, quality model is preferred first.
-- Otherwise normal routing prefers available providers in this order:
-  1. Groq (`llama-3.3-70b-versatile`)
-  2. Cerebras (`llama3.3-70b`)
-- Fallback chains are applied when multiple candidates exist.
+LLM provider selection is centralized in [services/llm.py](../services/llm.py).
 
-## Retrieval Design
+Current provider policy:
+1. Primary: local Ollama model when `USE_LOCAL_LLM` is true and Ollama is reachable
+2. Fallback 1: Cerebras
+3. Fallback 2: Groq
+4. Quality fallback: GitHub Models when `prefer_quality=True` and no local or cloud provider is available
 
-`services/retriever.py` implements hybrid retrieval:
-- `rag_search(query)` queries local Chroma collection `indian_political_facts`.
-- Confidence is computed as `1 - distance` from top match.
-- If confidence >= 0.75 and results exist, method is `rag`.
-- Otherwise it executes trusted-source DuckDuckGo search and returns either:
-  - `live_search` if no RAG results existed, or
-  - `hybrid` with merged RAG + live evidence.
+Retry behavior:
+- `get_llm_with_retry()` applies staged waits for rate-limit-like errors
+- non-rate errors are raised immediately
 
-## Data Indexing
+## Retrieval architecture
 
-`services/indexer.py` performs offline ingestion:
-- Fetches source pages.
-- Extracts source-specific article text using CSS selectors.
-- Chunks text (500 chars with 100 overlap).
-- Embeds chunks with `sentence-transformers/all-MiniLM-L6-v2`.
-- Upserts vectors and metadata into ChromaDB persistent storage.
+Retriever implementation is in [services/retriever.py](../services/retriever.py).
 
-## Streaming and API Wiring
+Core strategy:
+- run semantic retrieval against the local Chroma index
+- compute confidence from the top distance
+- return `rag` if confidence threshold is met
+- otherwise run live search and return `live_search` or `hybrid`
 
-- `services/runner.py` streams step-level state events.
-- `app.py` exposes:
-  - POST `/api/verify` for single-response execution.
-  - GET `/api/stream` for SSE event streaming.
-  - GET `/api/health` for readiness/config visibility.
+Source strategy:
+- RAG-backed domain list for indexed sources
+- live-only domain list for domains intentionally not indexed
+- deduplicated live source list assembled at runtime
 
-## Frontend Status
+Live enrichments:
+- deep legal search on IndianKanoon for legal-style claims
+- dedicated PIB search path for government press-release coverage
 
-Current frontend includes live SSE wiring and graph rendering:
-- `static/index.html` includes claim input, pipeline stream panel, graph container, and results snapshot panel.
-- `static/css/style.css` provides responsive visuals.
-- `static/js/main.js` submits claims to `/api/stream`, updates active agent state, handles errors, and renders final results.
-- `static/js/truth-graph.js` renders a D3 graph and exposes `window.truthGraph.activateNode(...)` for active-node updates.
+Evidence prioritization:
+- RAG results are sorted to prioritize legal and government categories
 
-Known frontend caveat:
-- Very fast stage transitions (especially `preprocessor`) can be difficult to capture in automated sampling even when visible during run.
+## Indexing architecture
+
+Indexer implementation is in [services/indexer.py](../services/indexer.py).
+
+Current behavior:
+- source registry with category tags
+- per-source selector and optional fallback selector
+- per-source skip controls with explicit skip_reason
+- static fetch and extraction pipeline
+- chunking with overlap
+- embedding generation through `OllamaEmbeddings` with `nomic-embed-text`
+- upsert into Chroma with source metadata and category
+
+Operational note:
+- multiple sources are intentionally skipped due to blocking, dynamic rendering, or non-static content constraints
+
+## API and stream architecture
+
+Flask routes in [app.py](../app.py):
+- GET /
+- GET /api/health
+- GET /api/ollama-models
+- GET /api/settings
+- POST /api/settings
+- POST /api/verify
+- GET /api/stream
+
+Runner behavior in [services/runner.py](../services/runner.py):
+- step events streamed as state transitions occur
+- final event emitted after graph completion
+- handled validation errors still currently finish with `event_type: complete` and a populated `state.error`
+
+## Frontend architecture
+
+UI files:
+- [static/index.html](../static/index.html)
+- [static/css/style.css](../static/css/style.css)
+- [static/js/main.js](../static/js/main.js)
+- [static/js/truth-graph.js](../static/js/truth-graph.js)
+
+Frontend behavior:
+- captures user input and opens an EventSource stream
+- updates active stage label and status pill live
+- highlights graph nodes as stages change
+- renders result summary after completion
+- shows inline error text when `state.error` is present
+
+## Current risks and constraints
+
+1. Contract consistency:
+- terminal SSE error semantics for empty input are still normalized through `state.error`, not a dedicated terminal error event
+
+2. Index coverage:
+- source ingestion is intentionally partial for blocked or JS-rendered sources
+
+3. Quality stability:
+- verdict quality can still vary claim to claim depending on retrieval depth and live-source quality
+
+4. Test maturity:
+- integration and regression automation is still limited

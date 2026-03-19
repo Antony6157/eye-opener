@@ -1,149 +1,162 @@
-# 👁 The Eye Opener
+# The Eye Opener
 
-AI-powered political fact-checking for India — built with LangGraph and ChromaDB.
+AI-powered political claim verification for India, built with Flask, LangGraph, ChromaDB, and D3.
 
-![Python](https://img.shields.io/badge/Python-3.11-blue) ![Flask](https://img.shields.io/badge/Flask-3.x-lightgrey) ![LangGraph](https://img.shields.io/badge/LangGraph-latest-purple)
-![ChromaDB](https://img.shields.io/badge/ChromaDB-RAG-teal) ![CSS](https://img.shields.io/badge/CSS-Animations-orange) ![License](https://img.shields.io/badge/License-MIT-green)
-![Status](https://img.shields.io/badge/Status-Active_Development-yellow)
+Current runtime profile:
+- Local-first inference through Ollama when it is enabled and reachable
+- Cloud fallback chain through Cerebras and Groq, with GitHub Models available for quality mode
+- Hybrid retrieval with local ChromaDB plus live DuckDuckGo enrichment
+- Real-time stream updates via Server-Sent Events
 
 ## What it does
 
-| 🔍 Input | ⚙️ Pipeline | 📊 Output |
-| --- | --- | --- |
-| Plain text claim or YouTube URL | Architect Orchestrator + 4 Workers | Truth score 1–100 + per-claim verdicts |
+Input:
+- Plain text claim
+- YouTube URL handled through the same input box and transcript extraction in the preprocessor
 
-## Architecture
+Pipeline:
+- preprocessor
+- surgeon
+- diver
+- skeptic
+- scorer
 
-* **Worker agents:** 4 (`Surgeon`, `Diver`, `Skeptic`, `Scorer`)
-* **Pipeline stages:** 5 (Preprocessor + 4 Workers)
-* **Orchestration:** 1 `Architect` governing the LangGraph execution flow
+Output:
+- Per-claim verdicts
+- Aggregate truth score from 0 to 100
+- Retrieval method (`rag`, `live_search`, or `hybrid`)
 
-```text
-Input -> [Architect] -> [Preprocessor] -> [Surgeon] -> [Diver] -> [Skeptic] -> [Scorer] -> Results
-                                                           ^
-                                              ChromaDB RAG + DuckDuckGo Live Search
-```
+## Canonical architecture
+
+Execution stages:
+- preprocessor -> surgeon -> diver -> skeptic -> scorer
+
+Graph orchestration:
+- Architect compiles and routes the LangGraph state machine
+- error_handler is the terminal failure node
+
+Retrieval model:
+- RAG first from the local ChromaDB collection
+- Live fallback via DuckDuckGo search
+- Extra live enrichment for legal claims through IndianKanoon and government claims through PIB search
 
 ## Tech stack
 
-| Category | Technology |
-| --- | --- |
-| Backend | Flask 3.x |
-| AI Orchestration | LangGraph |
-| LLM (Primary) | Cerebras (OpenAI-compatible API) |
-| LLM (Fallback 1) | Groq |
-| LLM (Fallback 2) | GitHub Models |
-| Vector DB | ChromaDB |
-| Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
-| Frontend | HTML + CSS + Vanilla JavaScript |
-| Visualization | Native HTML/CSS Linear Flowchart Animations |
+Backend:
+- Flask
+- Flask-CORS
+- LangGraph
+
+LLM:
+- Primary: local Ollama when `USE_LOCAL_LLM=true` and Ollama is reachable
+- Fallback 1: Cerebras
+- Fallback 2: Groq
+- Quality mode fallback: GitHub Models when explicitly requested and no other providers are available
+
+Embeddings:
+- OllamaEmbeddings with `nomic-embed-text`
+
+Data:
+- ChromaDB persistent local vector store
+
+Frontend:
+- HTML, CSS, vanilla JavaScript
+- D3 workflow graph, flow timeline, result panels, and settings drawer
 
 ## Quick start
 
-1. Clone the repository.
+1. Create and activate venv
 
-```bash
-git clone https://github.com/meamritanshu/eye-opener.git
-cd eye-opener
-```
+Windows PowerShell:
+- python -m venv .venv
+- .\.venv\Scripts\Activate.ps1
 
-2. Create and activate a virtual environment.
+2. Install dependencies
+- pip install -r requirements.txt
 
-```bash
-python -m venv .venv
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-```
+3. Create env file
+- copy .env.example .env
 
-3. Install dependencies.
+4. Ensure local Ollama is running if you want local inference and embeddings:
+- LLM model: XianYu_bi/DeepSeek-R1-Distill-Qwen-14B-Q3_K_M:latest
+- Embedding model: nomic-embed-text
 
-```bash
-pip install -r requirements.txt
-```
+5. Build or refresh index
+- python -m services.indexer
 
-4. Copy environment template.
+6. Start server
+- python app.py
 
-```bash
-copy .env.example .env
-```
+7. Open app
+- http://localhost:5000/
 
-5. Add API keys to `.env`.
+## Environment variables
 
-```bash
-# Required (at least one for worker execution)
-CEREBRAS_API_KEY=...
-GROQ_API_KEY=...
+Core:
+- FLASK_ENV
+- FLASK_PORT
+- CHROMA_DB_PATH
 
-# Used by quality-first scorer path
-GITHUB_TOKEN=...
-```
+Local-first LLM:
+- USE_LOCAL_LLM=true
+- OLLAMA_BASE_URL=http://localhost:11434
+- OLLAMA_MODEL=XianYu_bi/DeepSeek-R1-Distill-Qwen-14B-Q3_K_M:latest
 
-6. Run the indexer.
-
-```bash
-python -m services.indexer
-```
-
-7. Run the app.
-
-```bash
-python app.py
-```
-
-8. Open the browser.
-
-```bash
-http://localhost:5001/
-```
-
-## Agent pipeline
-
-| Agent | Role | Input | Output |
-| --- | --- | --- | --- |
-| Preprocessor | Normalizes user input and resolves transcript text | Raw claim text or YouTube URL | `cleaned_text`, `error` (if any) |
-| Surgeon | Extracts precise, testable factual claims | `cleaned_text` | `claims[]` |
-| Diver | Retrieves evidence via RAG-first with live-search fallback | `claims[]` | `research_logs[]`, `retrieval_method` |
-| Skeptic | Critiques evidence quality, framing, and missing context | `research_logs[]` | `critiques[]` |
-| Scorer | Produces claim-level verdicts and aggregate trust score | Claims + evidence + critiques | `verdicts[]`, `truth_score` |
+Cloud fallbacks:
+- CEREBRAS_API_KEY
+- GROQ_API_KEY
+- GITHUB_TOKEN
+- GITHUB_QUALITY_MODEL
 
 ## Project status
 
-### ✅ Implemented
-- End-to-end SSE pipeline with ordered agent progression.
-- Hybrid retrieval path tracking (`rag`, `live_search`, `hybrid`).
-- Frontend SSE client and live status updates.
-- Custom CSS visual flowchart rendering with active node tooltips.
-- Graceful error handling for missing API keys and empty ChromaDB.
-- Detailed UI panels for "Sources Used" and "Score Explanation".
+Implemented:
+- End-to-end streamed pipeline and UI wiring
+- Local-first Ollama routing plus cloud fallbacks
+- Expanded source catalog with category metadata
+- Source skip controls with explicit skip reasons
+- Legal and PIB live retrieval enrichments
+- Scorer hardening for DeepSeek think-block stripping and zero-score fallback
+- Settings and Ollama model endpoints in the Flask app
 
-### 🔧 In Progress
-- Hardening indexer source access (PIB 403 headers; BoomLive/VishvasNews selectors).
+Partially complete:
+- Source coverage for dynamic or blocked websites remains intentionally limited for static indexing
+- Retrieval quality still depends on the strength of local index coverage and live snippets
 
-## Team
+Open issues:
+- Empty-input SSE runs still finish with a terminal `complete` event carrying `state.error` instead of a dedicated terminal `error` event
+- Integration and regression coverage is still limited
+- Documentation and release notes need to stay in sync with implementation changes
 
-| Role | Branch |
-| --- | --- |
-| AI Pipeline Lead | feat/ai-pipeline |
-| RAG & Retrieval Lead | feat/rag-retrieval |
-| Frontend Lead | feat/frontend |
+## Repository map
 
-## Contributing
+Core backend:
+- app.py
+- config.py
+- services/architect.py
+- services/runner.py
+- services/agents.py
+- services/preprocessor.py
+- services/retriever.py
+- services/indexer.py
+- services/state.py
+- services/llm.py
 
-```text
-Branch rules:
-- main: protected, release-ready only
-- develop: integration branch
-- feature branches: feat/*
-```
+Frontend:
+- static/index.html
+- static/css/style.css
+- static/js/main.js
+- static/js/truth-graph.js
 
-Commit format guide:
-- `feat: add hybrid retrieval fallback logic`
-- `fix: handle 429 retry in scorer path`
-- `docs: update next-session handoff notes`
+Docs:
+- docs/architecture.md
+- docs/api.md
+- docs/agent_orchestration_clarification.md
+- implementation_checklist.md
+- implementation_plan.md
+- phase_wise_implementation_plan.md
+- NEXT_SESSION.md
 
-PR process:
-1. Create a feature branch from `develop` and keep changes scoped.
-2. Open a PR to `develop` with test notes, screenshots (if UI), and risk summary.
-3. After review + checks pass, squash-merge; promote to `main` via release PR.
+## License
 
-MIT License — built for educational and research purposes
+MIT License. Built for educational and research use.

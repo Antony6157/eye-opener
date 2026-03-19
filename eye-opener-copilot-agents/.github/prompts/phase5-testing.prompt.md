@@ -6,7 +6,7 @@ Use when running the full end-to-end test and hardening pass. Reference with `#p
 ---
 
 ## Your role
-Act as a senior QA engineer. Review my code and help me verify that every item in this checklist passes. For each failure, suggest the exact fix.
+Act as a senior QA engineer. Review the code and verify that every item in this checklist passes. For each failure, suggest the exact fix.
 
 ---
 
@@ -19,8 +19,8 @@ Act as a senior QA engineer. Review my code and help me verify that every item i
 
 ### 2. Backend health
 - [ ] `GET /api/health` returns `{"status": "ok"}` with HTTP 200
-- [ ] CORS headers present on all API responses: `Access-Control-Allow-Origin`
-- [ ] Submitting a request from a different port (e.g. Live Server on 5500 → Flask on 5000) succeeds
+- [ ] CORS headers present on API responses
+- [ ] Submitting a request from a different port succeeds
 
 ### 3. Plain text claim pipeline
 - [ ] POST `/api/verify` or SSE to `/api/stream` with a real Indian political claim completes without error
@@ -34,21 +34,21 @@ Act as a senior QA engineer. Review my code and help me verify that every item i
 - [ ] Pipeline completes normally from transcript
 
 ### 5. RAG and retrieval
-- [ ] `chroma_db/` folder exists and is non-empty after running `indexer.py`
+- [ ] `chroma_db/` folder exists and is non-empty after running the indexer
 - [ ] `retrieval_method` field in final state is one of: `"rag"`, `"live_search"`, `"hybrid"`
-- [ ] Querying a well-known fact (e.g. something from PIB) uses `"rag"` path
+- [ ] Querying a well-known fact can use the `"rag"` path when the local index covers it
 - [ ] If ChromaDB returns low-confidence results, fallback to live search is triggered
 
 ### 6. Error state
-- [ ] Pass an empty string as input — pipeline sets `error` and returns a clean error event
-- [ ] Pass an invalid YouTube URL — preprocessor sets `error`, pipeline routes to error node
-- [ ] Revoke all three keys (`CEREBRAS_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN`) and run pipeline — warning is visible and failure is returned as a controlled error event, not a 500 crash
+- [ ] Pass an empty string as input - pipeline sets `error` and returns a clean error event or handled failure state
+- [ ] Pass an invalid YouTube URL - preprocessor sets `error`, pipeline routes to error node
+- [ ] Revoke all three keys (`CEREBRAS_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN`) and run pipeline - warning is visible and failure is returned as a controlled error response, not a 500 crash
 
 ### 7. Frontend
-- [ ] D3 graph renders on page load with all 8 nodes visible
+- [ ] Workflow graph renders on page load with all stages visible
 - [ ] Each SSE step event highlights the correct node in the graph
 - [ ] Results panel is hidden on load and appears only after pipeline completes
-- [ ] Truth score badge colour: red for ≤40, amber for 41–70, green for ≥71
+- [ ] Truth score badge color: red for ≤40, amber for 41–70, green for ≥71
 - [ ] Retrieval badge correctly shows `"RAG ✓"`, `"Live Search"`, or `"Hybrid"`
 - [ ] Page is usable on mobile screen widths (≥ 360px)
 

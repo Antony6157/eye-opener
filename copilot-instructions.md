@@ -1,19 +1,20 @@
 # The Eye Opener — Master Copilot Instructions
 
 ## Project overview
-You are assisting in building "The Eye Opener", an AI-powered fact-checking platform for Indian political discourse. Always keep this context in mind for every suggestion, completion, and review.
+You are assisting in building "The Eye Opener", an AI-powered fact-checking platform for Indian political discourse. Keep the current runtime architecture in mind for every suggestion, completion, and review.
 
 ## Tech stack
 - **Backend**: Python, Flask, flask-cors
-- **AI / Orchestration**: LangGraph, LangChain, langchain-openai, langchain-groq
-- **LLM Routing**: `services/llm.py` with 3-tier free model architecture
-    - Primary: Cerebras `llama-3.3-70b` (OpenAI-compatible API)
-    - Fallback 1: Groq `llama-3.3-70b-versatile` (ChatGroq)
-    - Fallback 2 (quality mode): GitHub Models `gpt-4.1-mini` (OpenAI-compatible API)
-- **RAG**: ChromaDB, Google Generative AI embeddings
-- **Retrieval**: duckduckgo-search, BeautifulSoup4, requests
+- **AI / Orchestration**: LangGraph, LangChain, langchain-openai, langchain-groq, langchain-ollama
+- **LLM Routing**: `services/llm.py` with local-first fallback routing
+  - Primary: Ollama when `USE_LOCAL_LLM=true` and the service is reachable
+  - Fallback 1: Cerebras `llama-3.3-70b` (OpenAI-compatible API)
+  - Fallback 2: Groq `llama-3.3-70b-versatile` (ChatGroq)
+  - Quality mode fallback: GitHub Models `gpt-4.1-mini` (OpenAI-compatible API)
+- **RAG**: ChromaDB, OllamaEmbeddings with `nomic-embed-text`
+- **Retrieval**: DuckDuckGo search, BeautifulSoup4, requests
 - **Input handling**: youtube-transcript-api
-- **Frontend**: Vanilla JS, D3.js (force-directed graph), SSE (Server-Sent Events)
+- **Frontend**: Vanilla JS, D3 workflow graph, SSE (Server-Sent Events)
 - **Config**: python-dotenv
 
 ## Project folder structure
@@ -24,21 +25,22 @@ eye-opener/
 ├── .gitignore
 ├── requirements.txt
 ├── config.py                   # loads .env via python-dotenv
-├── app.py                      # Flask server, SSE route, CORS
+├── app.py                      # Flask server, SSE route, settings API, CORS
 ├── services/
 │   ├── state.py                # AgentState TypedDict
 │   ├── preprocessor.py         # YouTube transcript + input cleaning
 │   ├── llm.py                  # centralized LLM provider selector
-│   ├── agents.py               # 4 worker agents
+│   ├── agents.py               # 4 worker agents (surgeon/diver/skeptic/scorer)
 │   ├── architect.py            # LangGraph StateGraph definition
 │   ├── runner.py               # executes graph, yields SSE events
+│   ├── retriever.py            # hybrid retrieval policy
 │   └── indexer.py              # ChromaDB indexer for trusted sources
 └── static/
     ├── index.html
     ├── css/style.css
     └── js/
         ├── main.js             # SSE listener, UI interactions
-        └── truth-graph.js      # D3.js force-directed graph
+        └── truth-graph.js      # D3 workflow graph
 ```
 
 ## AgentState shape (always import from services/state.py)
@@ -56,14 +58,17 @@ class AgentState(TypedDict):
     error: Optional[str]          # None if pipeline succeeded
 ```
 
-## The 5 pipeline nodes (in order)
+## Pipeline stages and roles
+Execution stages (5 total):
 1. `preprocessor` — cleans input, extracts YouTube transcripts
-2. `surgeon` — extracts testable claims from cleaned_text
+2. `surgeon` — extracts testable claims from `cleaned_text`
 3. `diver` — retrieves evidence (RAG first, live search fallback)
 4. `skeptic` — devil's advocate critique of evidence
 5. `scorer` — calculates 1–100 truth score and per-claim verdicts
 
-The Architect wires these into a LangGraph StateGraph. Any node can route to an `error` terminal node by setting `state["error"]`.
+Worker agents (4 total): `surgeon`, `diver`, `skeptic`, `scorer`.
+
+The Architect wires these stages into a LangGraph `StateGraph`. Any node can route to `error_handler` by setting `state["error"]`.
 
 ## Trusted Indian sources (Deep Diver targets)
 - https://pib.gov.in
@@ -74,7 +79,7 @@ The Architect wires these into a LangGraph StateGraph. Any node can route to an 
 
 ## Coding rules — always follow these
 - Never hardcode API keys. All secrets come from `config.py`.
-- All agents must import `get_llm` from `services/llm.py` instead of constructing LLM clients directly.
+- All agents must import the centralized LLM helper from `services/llm.py` instead of constructing LLM clients directly.
 - Always type-hint function signatures.
 - Every agent function signature: `def agent_name(state: AgentState) -> AgentState`
 - SSE events must always include `active_agent` and `event_type` fields.
